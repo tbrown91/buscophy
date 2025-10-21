@@ -20,11 +20,11 @@ sys.path.append(os.path.join(workflow_folder, "scripts"))
 print('workflow directory can be found here: {}'.format(workflow_folder))
 
 FILES=glob_wildcards(os.path.join(input_dir , "{species}.{ext, (fa|fas)}"))
-print(FILES)
+#print(FILES)
 
 
 FILES=glob_wildcards(os.path.join(input_dir , "{species}.fas"))
-localrules: all, busco_download
+localrules: all
 
 # validate_fasta.py -i input.fas -c touch.check.ok
 # checkpoint
@@ -39,11 +39,9 @@ rule all:
         "results/phylo/busco_phylo.treefile"
         #"results/phylo/busco_phylo_nt.treefile"
 
-
-
 rule busco_download:
     output:
-        sets="results/busco/lineages/{lineage}/info/species.info",
+        sets="results/busco/lineages/{lineage}/info/species.info"
     params:
         dwnld="results/busco"
     log:
@@ -54,10 +52,8 @@ rule busco_download:
         "docker://ezlabgva/busco:v6.0.0_cv1"
     shell:
         """
-   ( [ -d {params.dwnld} ] || mkdir -p {params.dwnld}
-
-    busco --download_path {params.dwnld} --download {wildcards.lineage} ) &> {log}
-
+        ( [ -d {params.dwnld} ] || mkdir -p {params.dwnld} )
+        busco --download_path {params.dwnld} --download {wildcards.lineage} &> {log}
         """
 
 rule busco_run:
@@ -67,12 +63,12 @@ rule busco_run:
     params:
         mode="genome",
         busco_out_dir="results/busco/{species}",
-        lineages_dir="results/busco/lineages",
+        lineages_dir="results/busco/lineages"
     output:
         busco_summary="results/busco/{species}/short_summary.specific.{lineage}.{species}.json",
         busco_summary_txt="results/busco/{species}/short_summary.specific.{lineage}.{species}.txt",
         busco_table="results/busco/{species}/run_{lineage}/full_table.tsv"
-    threads: 
+    threads:
         config["max_threads"]
     log:
         "results/logs/busco/{species}.{lineage}.busco.log"
@@ -84,13 +80,9 @@ rule busco_run:
         "docker://ezlabgva/busco:v6.0.0_cv1"
     shell:
         """
-( busco -m {params.mode} -i {input.assembly} -o {params.busco_out_dir}  --quiet \
-        -l {params.lineages_dir}/{wildcards.lineage} -c {threads} -f --offline  ) &> {log}
-
-"""
-
-#--augustus --augustus_parameters='--progress=true'
-
+        busco -m {params.mode} -i {input.assembly} -o {params.busco_out_dir} --quiet \
+            -l {params.lineages_dir}/{wildcards.lineage} -c {threads} -f --offline &> {log}
+        """
 
 rule busco_summary:
     input:
@@ -99,23 +91,19 @@ rule busco_summary:
             species=FILES.species 
             )
     output:
-        "results/busco/summary/busco_figure.png",
+        "results/busco/summary/busco_figure.png"
     params:
         dir="results/busco/summary/"
-    threads: 
-        1
+    threads: 1
     conda:
         "envs/busco_6.yml"
     container:
         "docker://ezlabgva/busco:v6.0.0_cv1"
     shell:
         """
-for file in {input}; do cp $file {params.dir} ; done
-
-busco --plot {params.dir}
-
-"""
-
+        for file in {input}; do cp $file {params.dir}; done
+        busco --plot {params.dir}
+        """
 
 #################
 ## Busco Phylo ##
@@ -138,14 +126,14 @@ rule select_busco:
 # for fragmented genes
 FRAG={params.fragmented}
 if [ -n "$FRAG" ] ; then
-	for file in results/busco/{wildcards.species}/run_{wildcards.lineage}/busco_sequences/fragmented_busco_sequences/*.faa; do
-            # copy aminoacids
-    		cp ${{file}} {params.phylo_dir}/{wildcards.species}_$(basename ${{file}})
-    		sed -i 's/^>/>{wildcards.species}|/g' {params.phylo_dir}/{wildcards.species}_$(basename ${{file}})
-            # copy nucleotides
-    		#cp ${{file%.faa}}.fna {params.phylo_dir}/{wildcards.species}_$(basename ${{file%.faa}}.fna)
-    		#sed -i 's/^>/>{wildcards.species}|/g' {params.phylo_dir}/{wildcards.species}_$(basename ${{file%.faa}}.fna)
-	done
+    for file in results/busco/{wildcards.species}/run_{wildcards.lineage}/busco_sequences/fragmented_busco_sequences/*.faa; do
+    # copy aminoacids
+        cp ${{file}} {params.phylo_dir}/{wildcards.species}_$(basename ${{file}})
+        sed -i 's/^>/>{wildcards.species}|/g' {params.phylo_dir}/{wildcards.species}_$(basename ${{file}})
+        # copy nucleotides
+        #cp ${{file%.faa}}.fna {params.phylo_dir}/{wildcards.species}_$(basename ${{file%.faa}}.fna)
+        #sed -i 's/^>/>{wildcards.species}|/g' {params.phylo_dir}/{wildcards.species}_$(basename ${{file%.faa}}.fna)
+    done
 
 fi
 

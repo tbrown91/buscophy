@@ -1,10 +1,15 @@
 # Buscophy pipeline for generation of phylogenetic trees from busco genes
 All rules and base pipeline is taken from https://gitlab.leibniz-lib.de/smartin/buscophy written by [Sebastian Martin](https://gitlab.leibniz-lib.de/smartin)
 
-create base conda environment with
+The main changes so far are:
+
+* An update from BUSCO v5 to v6 to be able to incorporate the odb12 databases. 
+
+In order to run:
+
+Create base conda environment with
 
 `conda env create --file base_snakemake.yml`
-
 
 I have tested this with conda and singularity. It should also work with apptainer
 
