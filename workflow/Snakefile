@@ -8,10 +8,8 @@ import numpy as np
 
 configfile: "config.yaml"
 
-## these should be variable later on
-input_dir=config["input_dir"] #'input'
+input_dir=config["input_dir"]
 busco_lineages=config["lineage"]
-##
 
 workflow_folder = os.path.dirname(os.path.abspath(workflow.snakefile))
 
@@ -20,17 +18,9 @@ sys.path.append(os.path.join(workflow_folder, "scripts"))
 print('workflow directory can be found here: {}'.format(workflow_folder))
 
 FILES=glob_wildcards(os.path.join(input_dir , "{species}.{ext, (fa|fas)}"))
-#print(FILES)
-
 
 FILES=glob_wildcards(os.path.join(input_dir , "{species}.fas"))
 localrules: all
-
-# validate_fasta.py -i input.fas -c touch.check.ok
-# checkpoint
-# input all files from input dir
-# extract {species} from check.ok files
-
 
 rule all:
     input:
@@ -38,6 +28,8 @@ rule all:
         "results/busco/summary/busco_figure.png",
         "results/phylo/busco_phylo.treefile"
         #"results/phylo/busco_phylo_nt.treefile"
+
+### I would suggest adding a rule here to convert all assemblies into upper-case letters. This will remove issues downstream with nt/aa differences
 
 rule busco_download:
     output:
@@ -109,10 +101,49 @@ rule busco_summary:
 ## Busco Phylo ##
 #################
 
-
-rule select_busco:
+#Extract the nucleotide sequences from the gff files
+### This whole rule needs a fix. Whatever tool I use, the nt sequences are inconsistent with the aa sequences. There are issues with missing stop codons at the ends, retained "N"s in the sequences, etc. I will have to look and see how the nt sequenes were extracted in BUSCO v5
+rule get_nt:
     input:
-        "results/busco/{species}/run_{lineage}/full_table.tsv"
+        assembly=os.path.join(input_dir , "{species}.fas"),
+        results="results/busco/{species}/run_{lineage}/full_table.tsv"
+    output:
+        touch("results/phylo/{species}.{lineage}.nt_collection.log")
+    params:
+        phylo_dir="results/phylo/busco_sequences",
+        fragmented="yes" if config["fragmented"]=="yes" else [],
+    threads: 1
+    conda:
+        "envs/gffread.yaml"
+    container:
+        "docker://dceoy/gffread:latest"
+    shell:
+        """
+
+[ ! -d {params.phylo_dir} ] && mkdir -p {params.phylo_dir}
+
+# for fragmented genes
+FRAG={params.fragmented}
+if [ -n "$FRAG" ] ; then
+    for file in results/busco/{wildcards.species}/run_{wildcards.lineage}/busco_sequences/fragmented_busco_sequences/*.gff; do
+        base=$(basename "${{file%.gff}}")
+        gffread -W -x {params.phylo_dir}/{wildcards.species}_${{base}}.fna -g {input.assembly} "$file"
+        sed -i 's/^>/>{wildcards.species}|/g' {params.phylo_dir}/{wildcards.species}_${{base}}.fna
+    done
+fi
+
+# for complete busco genes
+for file in results/busco/{wildcards.species}/run_{wildcards.lineage}/busco_sequences/single_copy_busco_sequences/*.gff; do
+    base=$(basename "${{file%.gff}}")
+    gffread -W -x {params.phylo_dir}/{wildcards.species}_${{base}}.fna -g {input.assembly} "$file"
+    sed -i 's/^>/>{wildcards.species}|/g' {params.phylo_dir}/{wildcards.species}_${{base}}.fna
+done
+"""
+
+#Get the amino acid sequences derived for each gene
+rule get_aa:
+    input:
+        "results/phylo/{species}.{lineage}.nt_collection.log"
     output:
         touch("results/phylo/{species}.{lineage}_collection.log")
     params:
@@ -127,36 +158,26 @@ rule select_busco:
 FRAG={params.fragmented}
 if [ -n "$FRAG" ] ; then
     for file in results/busco/{wildcards.species}/run_{wildcards.lineage}/busco_sequences/fragmented_busco_sequences/*.faa; do
-    # copy aminoacids
-        cp ${{file}} {params.phylo_dir}/{wildcards.species}_$(basename ${{file}})
+        # copy aminoacids
+    	cp ${{file}} {params.phylo_dir}/{wildcards.species}_$(basename ${{file}})
         sed -i 's/^>/>{wildcards.species}|/g' {params.phylo_dir}/{wildcards.species}_$(basename ${{file}})
-        # copy nucleotides
-        #cp ${{file%.faa}}.fna {params.phylo_dir}/{wildcards.species}_$(basename ${{file%.faa}}.fna)
-        #sed -i 's/^>/>{wildcards.species}|/g' {params.phylo_dir}/{wildcards.species}_$(basename ${{file%.faa}}.fna)
     done
-
 fi
 
 # for complete busco genes
 for file in results/busco/{wildcards.species}/run_{wildcards.lineage}/busco_sequences/single_copy_busco_sequences/*.faa; do
-    
     # copy aminoacids
     cp ${{file}} {params.phylo_dir}/{wildcards.species}_$(basename ${{file}})
     sed -i 's/^>/>{wildcards.species}|/g' {params.phylo_dir}/{wildcards.species}_$(basename ${{file}})
-    # copy nucleotides
-    #cp ${{file%.faa}}.fna {params.phylo_dir}/{wildcards.species}_$(basename ${{file%.faa}}.fna)
-    #sed -i 's/^>/>{wildcards.species}|/g' {params.phylo_dir}/{wildcards.species}_$(basename ${{file%.faa}}.fna)
 done
 
-
 """
-
-
 
 #### here we added minimum number of busco genes per sample... 
 rule filter_busco:
     input:
         logs=expand("results/phylo/{species}.{lineage}_collection.log", lineage=busco_lineages, species=FILES.species ),
+        logs_nt=expand("results/phylo/{species}.{lineage}.nt_collection.log", lineage=busco_lineages, species=FILES.species ),
         tables=expand("results/busco/{species}/run_{lineage}/full_table.tsv",  species=FILES.species, lineage=busco_lineages  )
     output:
         complete="results/phylo/complete_busco_ids.txt",
@@ -205,19 +226,23 @@ checkpoint collect_busco:
     input:
         "results/phylo/final_busco_ids.txt"
     output:
-        directory("results/phylo/busco_aa_collection")
+        directory("results/phylo/busco_aa_collection"),
+        directory("results/phylo/busco_nt_collection")
     params:
         dir_aa="results/phylo/busco_aa_collection",
+        dir_nt="results/phylo/busco_nt_collection",
         phylo_dir="results/phylo/busco_sequences"
     threads: 1
     shell:
         """
 
 [ ! -d {params.dir_aa} ] && mkdir -p {params.dir_aa}
+[ ! -d {params.dir_nt} ] && mkdir -p {params.dir_nt}
 
 while read line; do
 
     cat {params.phylo_dir}/*_${{line}}.faa | cut -d'|' -f1  >> {params.dir_aa}/${{line}}_aa.fasta;
+    cat {params.phylo_dir}/*_${{line}}.fna | cut -d'|' -f1  >> {params.dir_nt}/${{line}}_nt.fasta;
 
 done<{input}
 """
@@ -242,8 +267,8 @@ rule busco_mafft:
 
 rule busco_pal2nal:
     input:
-        aa_alignment="results/phylo/busco_aa_alignments/{busco_EOG}_aa.fasta"
-        #nt_seq="results/phylo/busco_nt_collection/{busco_EOG}_nt.fasta"
+        aa_alignment="results/phylo/busco_aa_alignments/{busco_EOG}_aa.fasta",
+        nt_seq="results/phylo/busco_nt_collection/{busco_EOG}_nt.fasta"
     output:
         nt_alignment="results/phylo/busco_nt_alignments/{busco_EOG}_nt.fasta",
     threads: 1
@@ -311,7 +336,6 @@ rule busco_supermatrix:
 ( AMAS.py concat -f fasta -d aa --concat-out {output.matrix} --concat-part {output.partitions} -i {input}  ) &> {log}
 """
 
-
 rule busco_iqtree:
     input:
         sequence="results/phylo/supermatrix_aa.fasta",      
@@ -354,8 +378,6 @@ python3 ./scripts/final_overview.py {params.in_dir} {output.table}
 """
 # we can also try script function!
 
-
-
 def aggregate_EOGs_nt(wildcards):
     checkpoint_output = checkpoints.collect_busco.get(**wildcards).output[1]
     return expand("results/phylo/busco_nt_alignments_trim/{busco_EOG}_nt.fasta",
@@ -373,7 +395,7 @@ rule busco_supermatrix_nt:
     conda:
         "envs/amas.yaml"
     container:
-        "docker://paikga3/amas:latest"
+        "https://depot.galaxyproject.org/singularity/amas%3A1.0--pyh864c0ab_0"
     shell:
         """
 ( AMAS.py concat -f fasta -d dna --concat-out {output.matrix} --concat-part {output.partitions} -i {input}  ) &> {log}
@@ -385,7 +407,7 @@ rule busco_iqtree_nt:
         sequence="results/phylo/supermatrix_nt.fasta",      
     output:
         "results/phylo/busco_phylo_nt.treefile"
-    threads: 20
+    threads: config['max_threads']
     params:
         out_prefix="results/phylo/busco_phylo_nt",
         model="GTR" # might need to do real model testing... 
@@ -399,7 +421,6 @@ rule busco_iqtree_nt:
         """
 (iqtree -s {input.sequence} --prefix {params.out_prefix} -T AUTO --threads-max {threads} -m {params.model} -msub nuclear -B 1000 -alrt 1000 ) &> {log}
         """
-
 
 onsuccess:
     print("Workflow finished successfully!\nThank you for using buscophy.")
