@@ -1,11 +1,20 @@
 # Buscophy pipeline for generation of phylogenetic trees from busco genes
 All rules and base pipeline is taken from https://gitlab.leibniz-lib.de/smartin/buscophy written by [Sebastian Martin](https://gitlab.leibniz-lib.de/smartin)
 
-The main changes so far are:
+## The main changes so far are:
 
 * An update from BUSCO v5 to v6 to be able to incorporate the odb12 databases. 
+* Imposing use of --metaeuk to get both nt and aa files
+* switch to using mafft for alignment of both aa and nt files
 
-In order to run:
+## Things still to be implemented:
+
+* Change the workflow so that individual gene trees are made instead of a tree based on one supermatrix (could be an option)
+* Add multi-copy genes and implement a procedure for choosing the paralogs
+* Add the option to run busco with the `--augustus` argument. There needs to be some change with the augustus config
+* Modularise the pipeline to help tidy it up
+
+## In order to run:
 
 Create base conda environment with
 

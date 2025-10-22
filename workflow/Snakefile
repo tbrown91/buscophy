@@ -10,7 +10,7 @@ configfile: "config.yaml"
 
 input_dir=config["input_dir"]
 busco_lineages=config["lineage"]
-
+busco_args=config["busco_args"]
 workflow_folder = os.path.dirname(os.path.abspath(workflow.snakefile))
 
 sys.path.append(os.path.join(workflow_folder, "scripts"))
@@ -26,8 +26,8 @@ rule all:
     input:
         "results/phylo/overview_abspres.csv", # make sure script is in environment
         "results/busco/summary/busco_figure.png",
-        "results/phylo/busco_phylo.treefile"
-        #"results/phylo/busco_phylo_nt.treefile"
+        "results/phylo/busco_phylo.treefile",
+        "results/phylo/busco_phylo_nt.treefile"
 
 ### I would suggest adding a rule here to convert all assemblies into upper-case letters. This will remove issues downstream with nt/aa differences
 
@@ -55,7 +55,8 @@ rule busco_run:
     params:
         mode="genome",
         busco_out_dir="results/busco/{species}",
-        lineages_dir="results/busco/lineages"
+        lineages_dir="results/busco/lineages",
+        busco_args=busco_args
     output:
         busco_summary="results/busco/{species}/short_summary.specific.{lineage}.{species}.json",
         busco_summary_txt="results/busco/{species}/short_summary.specific.{lineage}.{species}.txt",
@@ -72,7 +73,7 @@ rule busco_run:
         "docker://ezlabgva/busco:v6.0.0_cv1"
     shell:
         """
-        busco -m {params.mode} -i {input.assembly} -o {params.busco_out_dir} --quiet \
+        busco -m {params.mode} -i {input.assembly} -o {params.busco_out_dir} {params.busco_args} --metaeuk --quiet \
             -l {params.lineages_dir}/{wildcards.lineage} -c {threads} -f --offline &> {log}
         """
 
@@ -132,18 +133,23 @@ if [ -n "$FRAG" ] ; then
     done
 fi
 
-# for complete busco genes
-for file in results/busco/{wildcards.species}/run_{wildcards.lineage}/busco_sequences/single_copy_busco_sequences/*.gff; do
-    base=$(basename "${{file%.gff}}")
-    gffread -W -x {params.phylo_dir}/{wildcards.species}_${{base}}.fna -g {input.assembly} "$file"
-    sed -i 's/^>/>{wildcards.species}|/g' {params.phylo_dir}/{wildcards.species}_${{base}}.fna
+# for complete busco genes - run in miniprot mode
+#for file in results/busco/{wildcards.species}/run_{wildcards.lineage}/busco_sequences/single_copy_busco_sequences/*.gff; do
+#    base=$(basename "${{file%.gff}}")
+#    gffread -W -x {params.phylo_dir}/{wildcards.species}_${{base}}.fna -g {input.assembly} "$file"
+#    sed -i 's/^>/>{wildcards.species}|/g' {params.phylo_dir}/{wildcards.species}_${{base}}.fna
+#done
+for file in results/busco/{wildcards.species}/run_{wildcards.lineage}/busco_sequences/single_copy_busco_sequences/*.fna; do
+    # copy nt files 
+    cp ${{file}} {params.phylo_dir}/{wildcards.species}_$(basename ${{file}})
+    sed -i 's/^>/>{wildcards.species}|/g' {params.phylo_dir}/{wildcards.species}_$(basename ${{file}})
 done
 """
 
 #Get the amino acid sequences derived for each gene
 rule get_aa:
     input:
-        "results/phylo/{species}.{lineage}.nt_collection.log"
+        results="results/busco/{species}/run_{lineage}/full_table.tsv"
     output:
         touch("results/phylo/{species}.{lineage}_collection.log")
     params:
@@ -253,7 +259,7 @@ rule busco_mafft:
         "results/phylo/busco_aa_collection/{busco_EOG}_aa.fasta"
     output:
         "results/phylo/busco_aa_alignments/{busco_EOG}_aa.fasta"
-    threads: 5
+    threads: 1
     log:
         "results/logs/phylo/mafft/{busco_EOG}.log"
     conda:
@@ -265,20 +271,21 @@ rule busco_mafft:
 ( mafft-linsi --thread {threads} {input} > {output} )&>{log}
 """
 
-rule busco_pal2nal:
+rule busco_mafftnt:
     input:
-        aa_alignment="results/phylo/busco_aa_alignments/{busco_EOG}_aa.fasta",
         nt_seq="results/phylo/busco_nt_collection/{busco_EOG}_nt.fasta"
     output:
-        nt_alignment="results/phylo/busco_nt_alignments/{busco_EOG}_nt.fasta",
+        nt_alignment="results/phylo/busco_nt_alignments/{busco_EOG}_nt.fasta"
     threads: 1
+    log:
+        "results/logs/phylo/mafft/{busco_EOG}.nt.log"
     conda:
-        "envs/pal2nal.yaml"
+        "envs/mafft.yaml"
     container:
-        "docker://biocontainers/pal2nal:v14.1-2-deb_cv1"
+        "docker://pegi3s/mafft:7.505"
     shell:
         """
-pal2nal.pl {input.aa_alignment} {input.nt_seq} -output fasta > {output.nt_alignment}
+( mafft-linsi --thread {threads} {input.nt_seq} > {output.nt_alignment} )&>{log}
         """
 
 
@@ -287,7 +294,7 @@ rule busco_trim:
         "results/phylo/busco_aa_alignments/{busco_EOG}_aa.fasta"
     output:
         "results/phylo/busco_aa_alignments_trim/{busco_EOG}_aa.fasta"
-    threads: 5
+    threads: 1
     conda:
         "envs/trimal.yaml"
     container:
@@ -302,7 +309,7 @@ rule busco_trim_nt:
         "results/phylo/busco_nt_alignments/{busco_EOG}_nt.fasta"
     output:
         "results/phylo/busco_nt_alignments_trim/{busco_EOG}_nt.fasta"
-    threads: 5
+    threads: 1
     conda:
         "envs/trimal.yaml"
     container:
